@@ -309,6 +309,11 @@ export default async function handler(req, res) {
         const chatId = req.body?.message?.chat?.id || req.body?.edited_message?.chat?.id;
         const text = req.body?.message?.text || req.body?.edited_message?.text;
         console.log("Incoming update", { chatId, text });
+        // Minimal inline responder for health check
+        if (text && /^\/ping\b/i.test(text) && chatId) {
+          await bot.sendMessage(chatId, "pong ✔️");
+          return res.status(200).send("ok");
+        }
       } catch (_) {}
       await bot.processUpdate(req.body);
       res.status(200).send("ok");
