@@ -120,6 +120,27 @@ function replyUsage(chatId) {
 
 // Command wiring (same as src/bot.js, condensed)
 bot.onText(/^\/start\b/, (msg) => replyUsage(msg.chat.id));
+bot.on("message", (msg) => {
+  try {
+    const text = msg.text || "";
+    // Simple catch-all to confirm webhook is alive
+    if (!/^\//.test(text)) return; // only commands
+    const known = [
+      /^\/start\b/,
+      /^\/names\b/,
+      /^\/(add|spent)\b/,
+      /^\/(chia|split)\b/,
+      /^\/(clear|reset)\b/,
+      /^\/getchatid\b/,
+      /^\/(send|announce)\b/,
+    ];
+    if (!known.some((re) => re.test(text))) {
+      bot.sendMessage(msg.chat.id, "Không nhận ra lệnh. Gõ /start để xem hướng dẫn.");
+    }
+  } catch (e) {
+    // ignore
+  }
+});
 
 bot.onText(/^\/names\b(?:\s+(.+))?$/i, (msg, match) => {
   const chatId = msg.chat.id;
@@ -278,6 +299,8 @@ bot.onText(/^\/getchatid\b/i, (msg) => {
 export default async function handler(req, res) {
   if (req.method === "POST") {
     try {
+      // Basic log for debugging delays
+      // console.log('Incoming update', JSON.stringify(req.body));
       await bot.processUpdate(req.body);
       res.status(200).send("ok");
     } catch (err) {
