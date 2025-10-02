@@ -88,6 +88,12 @@ function computeSettlementFromItems(members, items) {
   });
 }
 
+function formatTransfersOnly(members, items) {
+  const transfers = computeSettlementFromItems(members, items);
+  if (transfers.length === 0) return "Chưa có khoản chi nào.";
+  return transfers.map((t) => `${t.from} → ${t.to}: ${formatCurrency(t.amount)}`).join("\n");
+}
+
 function parseAmount(text) {
   const normalized = String(text).replace(/,/g, "");
   const value = Number(normalized);
@@ -116,6 +122,28 @@ function replyUsage(chatId) {
 
 // Command wiring
 bot.onText(/^\/start\b/, (msg) => replyUsage(msg.chat.id));
+
+// Catch-all for unknown commands
+bot.on("message", (msg) => {
+  try {
+    const text = msg.text || "";
+    if (!/^\//.test(text)) return; // only commands
+    const known = [
+      /^\/start\b/,
+      /^\/names\b/,
+      /^\/(add|spent)\b/,
+      /^\/(chia|split)\b/,
+      /^\/(clear|reset)\b/,
+      /^\/getchatid\b/,
+      /^\/(send|announce)\b/,
+    ];
+    if (!known.some((re) => re.test(text))) {
+      bot.sendMessage(msg.chat.id, "Không nhận ra lệnh. Gõ /start để xem hướng dẫn.");
+    }
+  } catch (e) {
+    // ignore
+  }
+});
 
 bot.onText(/^\/names\b(?:\s+(.+))?$/i, (msg, match) => {
   const chatId = msg.chat.id;
@@ -186,6 +214,52 @@ bot.onText(/^\/(add|spent)\b\s+(.+)$/i, (msg, match) => {
     );
     return;
   }
+
+  // Space-separated fallback
+  const args = raw.split(/\s+/);
+  if (args.length < 2) {
+    bot.sendMessage(chatId, "Cú pháp: /add <NgườiTrả> - <SốTiền> - <A,B,...|all> - <ghi chú>");
+    return;
+  }
+  const payer = args[0];
+  try {
+    ensureMember(state, payer);
+  } catch (e) {
+    bot.sendMessage(chatId, e.message);
+    return;
+  }
+  const amount = parseAmount(args[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    bot.sendMessage(chatId, "Số tiền không hợp lệ.");
+    return;
+  }
+  let participants = state.members.slice();
+  let noteStartIdx = 2;
+  if (args[2]) {
+    const csv = args[2].replace(/^\[/, "").replace(/\]$/, "");
+    if (csv.toLowerCase() === "all") {
+      participants = state.members.slice();
+      noteStartIdx = 3;
+    } else {
+      const maybe = csv
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const allValid = maybe.length > 0 && maybe.every((n) => state.members.includes(n));
+      if (allValid) {
+        participants = maybe;
+        noteStartIdx = 3;
+      }
+    }
+  }
+  const note = args.slice(noteStartIdx).join(" ");
+  state.items.push({ payer, amount, participants, note });
+  bot.sendMessage(
+    chatId,
+    `Đã ghi: ${payer} trả ${formatCurrency(amount)} cho [${participants.join(", ")}]${
+      note ? ` (${note})` : ""
+    }`
+  );
 });
 
 // /chia
