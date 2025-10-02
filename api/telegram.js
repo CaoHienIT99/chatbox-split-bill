@@ -42,13 +42,13 @@ async function getState(chatId) {
     const data = await redis.get(key);
     if (data) {
       // Redis đã trả về object rồi, không cần parse
-      return typeof data === 'string' ? JSON.parse(data) : data;
+      return typeof data === "string" ? JSON.parse(data) : data;
     }
     const init = { members: ["loren", "rei", "jessi", "thora"], items: [], lastResult: null };
     await redis.set(key, JSON.stringify(init));
     return init;
   } catch (err) {
-    console.error('Redis getState error:', err);
+    console.error("Redis getState error:", err);
     // Fallback to default state
     return { members: ["loren", "rei", "jessi", "thora"], items: [], lastResult: null };
   }
@@ -57,7 +57,7 @@ async function setState(chatId, state) {
   try {
     await redis.set(`chat:${chatId}`, JSON.stringify(state));
   } catch (err) {
-    console.error('Redis setState error:', err);
+    console.error("Redis setState error:", err);
   }
 }
 
@@ -212,6 +212,54 @@ export default async function handler(req, res) {
           );
           return res.status(200).end("ok");
         }
+
+        // Space-separated fallback
+        const args = raw.split(/\s+/);
+        if (args.length >= 2) {
+          const payer = args[0];
+          if (!state.members.includes(payer)) {
+            await bot.sendMessage(chatId, `Tên không tồn tại trong nhóm: ${payer}`);
+            return res.status(200).end("ok");
+          }
+          const amount = parseAmount(args[1]);
+          if (!Number.isFinite(amount) || amount <= 0) {
+            await bot.sendMessage(chatId, "Số tiền không hợp lệ.");
+            return res.status(200).end("ok");
+          }
+          let participants = state.members.slice();
+          let noteStartIdx = 2;
+          if (args[2]) {
+            const csv = args[2].replace(/^\[/, "").replace(/\]$/, "");
+            if (csv.toLowerCase() === "all") {
+              participants = state.members.slice();
+              noteStartIdx = 3;
+            } else {
+              const maybe = csv
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+              const allValid = maybe.length > 0 && maybe.every((n) => state.members.includes(n));
+              if (allValid) {
+                participants = maybe;
+                noteStartIdx = 3;
+              }
+            }
+          }
+          const note = args.slice(noteStartIdx).join(" ");
+          state.items.push({ payer, amount, participants, note });
+          await setState(chatId, state);
+          await bot.sendMessage(
+            chatId,
+            `Đã ghi: ${payer} trả ${formatCurrency(amount)} cho [${participants.join(", ")}]${
+              note ? ` (${note})` : ""
+            }`
+          );
+          return res.status(200).end("ok");
+        }
+
+        // Invalid format
+        await bot.sendMessage(chatId, "Cú pháp: /add <NgườiTrả> <SốTiền> [A,B,...|all] [ghi chú]");
+        return res.status(200).end("ok");
       }
 
       // /chia
