@@ -364,16 +364,11 @@ export default async function handler(req, res) {
       // /clearall (wipe everything)
       if (/^\/(clearall)\b/i.test(text)) {
         const state = await getState(chatId);
-        const removed = state.items.length;
-        state.items = [];
-        state.lastResult = null;
-        await setState(chatId, state);
-        await bot.sendMessage(
-          chatId,
-          removed > 0 ? "Đã xoá toàn bộ dữ liệu." : "Không có dữ liệu."
-        );
+        const removedItems = Array.isArray(state.items) ? [...state.items] : [];
+        const removed = removedItems.length;
 
-        // Notify group who cleared and when
+        // Prepare group announcement with details BEFORE clearing
+        let groupMsg = "";
         try {
           if (DEFAULT_GROUP_CHAT_ID) {
             const who = from.username
@@ -382,14 +377,39 @@ export default async function handler(req, res) {
                 : `@${from.username}`
               : [from.first_name, from.last_name].filter(Boolean).join(" ") || `id:${from.id}`;
             const when = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Bangkok" });
-            await bot.sendMessage(
-              DEFAULT_GROUP_CHAT_ID,
-              `Bill đã được xoá bởi ${who} vào ${when}.`
-            );
+            const lines = removedItems.length
+              ? removedItems.map((it, idx) => {
+                  const username = it.createdByUsername || it.createdBy || null;
+                  const display = username
+                    ? username.startsWith("@")
+                      ? username
+                      : `@${username}`
+                    : it.createdByName || "(ẩn danh)";
+                  const note = it.note ? ` • ${it.note}` : "";
+                  return `${idx + 1}. ${display}: ${it.payer} trả ${formatCurrency(
+                    it.amount
+                  )} cho [${it.participants.join(", ")}]${note}`;
+                })
+              : ["(không có mục nào)"];
+            groupMsg = [
+              `Bill đã được xoá bởi ${who} vào ${when}.`,
+              "Các khoản đã xoá:",
+              ...lines,
+            ].join("\n");
+            await bot.sendMessage(DEFAULT_GROUP_CHAT_ID, groupMsg);
           }
         } catch (err) {
           // best-effort; ignore send errors
         }
+
+        // Now clear data and confirm to requester
+        state.items = [];
+        state.lastResult = null;
+        await setState(chatId, state);
+        await bot.sendMessage(
+          chatId,
+          removed > 0 ? "Đã xoá toàn bộ dữ liệu." : "Không có dữ liệu."
+        );
         return res.status(200).end("ok");
       }
 
