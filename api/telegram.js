@@ -1,6 +1,12 @@
+// pages/api/telegram.js
 import TelegramBot from "node-telegram-bot-api";
 
-// Environment
+export const config = {
+  api: {
+    bodyParser: false, // Bắt buộc để nhận raw body Telegram
+  },
+};
+
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const DEFAULT_GROUP_CHAT_ID = process.env.GROUP_CHAT_ID; // optional
 const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g. https://your-app.vercel.app/api/telegram
@@ -9,15 +15,14 @@ if (!TOKEN) {
   throw new Error("Missing TELEGRAM_BOT_TOKEN env");
 }
 
-// Single bot instance per Lambda cold start
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-// Attempt to set webhook on cold start (idempotent)
+// Thiết lập webhook (idempotent)
 if (WEBHOOK_URL) {
   bot.setWebHook(WEBHOOK_URL).catch(() => {});
 }
 
-// Shared in-memory state (cold start scoped)
+// In-memory state (cold start)
 const chatState = new Map();
 
 function getOrCreateState(chatId) {
@@ -83,17 +88,10 @@ function computeSettlementFromItems(members, items) {
   });
 }
 
-function formatTransfersOnly(members, items) {
-  const transfers = computeSettlementFromItems(members, items);
-  if (transfers.length === 0) return "Chưa có khoản chi nào.";
-  return transfers.map((t) => `${t.from} → ${t.to}: ${formatCurrency(t.amount)}`).join("\n");
-}
-
 function parseAmount(text) {
   const normalized = String(text).replace(/,/g, "");
   const value = Number(normalized);
-  if (Number.isFinite(value)) return value;
-  return NaN;
+  return Number.isFinite(value) ? value : NaN;
 }
 
 function ensureMember(state, name) {
@@ -108,39 +106,16 @@ function replyUsage(chatId) {
     "/start - hướng dẫn",
     "/names A,B,C,D - đặt tên 4 người",
     "/add <NgườiTrả> <SốTiền> [A,B,...|all] [ghi chú] - nhanh",
-    "/add <NgườiTrả> - <SốTiền> - <A,B,...|all> - <ghi chú> - rõ ràng",
-    "/chia - hiển thị ai trả cho ai và tự gửi vào group nếu cấu hình",
+    "/chia - hiển thị ai trả cho ai",
     "/clear - xoá dữ liệu hiện tại",
     "/getchatid - lấy Chat ID hiện tại",
     "/send - gửi kết quả gần nhất lên group",
-    "Chế độ sổ chung: nếu có GROUP_CHAT_ID, lệnh ở DM cũng ghi vào sổ của group.",
   ].join("\n");
   bot.sendMessage(chatId, msg);
 }
 
-// Command wiring (same as src/bot.js, condensed)
+// Command wiring
 bot.onText(/^\/start\b/, (msg) => replyUsage(msg.chat.id));
-bot.on("message", (msg) => {
-  try {
-    const text = msg.text || "";
-    // Simple catch-all to confirm webhook is alive
-    if (!/^\//.test(text)) return; // only commands
-    const known = [
-      /^\/start\b/,
-      /^\/names\b/,
-      /^\/(add|spent)\b/,
-      /^\/(chia|split)\b/,
-      /^\/(clear|reset)\b/,
-      /^\/getchatid\b/,
-      /^\/(send|announce)\b/,
-    ];
-    if (!known.some((re) => re.test(text))) {
-      bot.sendMessage(msg.chat.id, "Không nhận ra lệnh. Gõ /start để xem hướng dẫn.");
-    }
-  } catch (e) {
-    // ignore
-  }
-});
 
 bot.onText(/^\/names\b(?:\s+(.+))?$/i, (msg, match) => {
   const chatId = msg.chat.id;
@@ -211,53 +186,9 @@ bot.onText(/^\/(add|spent)\b\s+(.+)$/i, (msg, match) => {
     );
     return;
   }
-
-  const args = raw.split(/\s+/);
-  if (args.length < 2) {
-    bot.sendMessage(chatId, "Cú pháp: /add <NgườiTrả> - <SốTiền> - <A,B,...|all> - <ghi chú>");
-    return;
-  }
-  const payer = args[0];
-  try {
-    ensureMember(state, payer);
-  } catch (e) {
-    bot.sendMessage(chatId, e.message);
-    return;
-  }
-  const amount = parseAmount(args[1]);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    bot.sendMessage(chatId, "Số tiền không hợp lệ.");
-    return;
-  }
-  let participants = state.members.slice();
-  let noteStartIdx = 2;
-  if (args[2]) {
-    const csv = args[2].replace(/^\[/, "").replace(/\]$/, "");
-    if (csv.toLowerCase() === "all") {
-      participants = state.members.slice();
-      noteStartIdx = 3;
-    } else {
-      const maybe = csv
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const allValid = maybe.length > 0 && maybe.every((n) => state.members.includes(n));
-      if (allValid) {
-        participants = maybe;
-        noteStartIdx = 3;
-      }
-    }
-  }
-  const note = args.slice(noteStartIdx).join(" ");
-  state.items.push({ payer, amount, participants, note });
-  bot.sendMessage(
-    chatId,
-    `Đã ghi: ${payer} trả ${formatCurrency(amount)} cho [${participants.join(", ")}]${
-      note ? ` (${note})` : ""
-    }`
-  );
 });
 
+// /chia
 bot.onText(/^\/(chia|split)\b/i, async (msg) => {
   const chatId = msg.chat.id;
   const state = getOrCreateState(chatId);
@@ -284,6 +215,7 @@ bot.onText(/^\/(chia|split)\b/i, async (msg) => {
   }
 });
 
+// /clear
 bot.onText(/^\/(clear|reset)\b/i, (msg) => {
   const chatId = msg.chat.id;
   const state = getOrCreateState(chatId);
@@ -292,35 +224,43 @@ bot.onText(/^\/(clear|reset)\b/i, (msg) => {
   bot.sendMessage(chatId, "Đã xoá dữ liệu.");
 });
 
+// /getchatid
 bot.onText(/^\/getchatid\b/i, (msg) => {
   bot.sendMessage(msg.chat.id, `Chat ID: ${msg.chat.id}`);
 });
 
+// Main handler
 export default async function handler(req, res) {
   if (req.method === "GET") {
     return res
       .status(200)
       .json({ ok: true, msg: "webhook online", time: new Date().toISOString() });
   }
+
   if (req.method === "POST") {
     try {
-      // Basic log for debugging
-      try {
-        const chatId = req.body?.message?.chat?.id || req.body?.edited_message?.chat?.id;
-        const text = req.body?.message?.text || req.body?.edited_message?.text;
-        console.log("Incoming update", { chatId, text });
-        // Minimal inline responder for health check
-        if (text && /^\/ping\b/i.test(text) && chatId) {
-          await bot.sendMessage(chatId, "pong ✔️");
-          return res.status(200).send("ok");
-        }
-      } catch (_) {}
-      await bot.processUpdate(req.body);
-      res.status(200).send("ok");
+      // Read raw body
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const update = JSON.parse(body);
+
+      console.log("Incoming update:", update);
+
+      // /ping test
+      const chatId = update.message?.chat?.id || update.edited_message?.chat?.id;
+      const text = update.message?.text || update.edited_message?.text;
+      if (text && /^\/ping\b/i.test(text) && chatId) {
+        await bot.sendMessage(chatId, "pong ✔️");
+        return res.status(200).end("ok");
+      }
+
+      await bot.processUpdate(update);
+      return res.status(200).end("ok");
     } catch (err) {
-      res.status(500).send(err?.message || "error");
+      console.error("Webhook error:", err);
+      return res.status(500).send("error");
     }
-    return;
   }
-  res.status(200).send("ok");
+
+  return res.status(200).send("ok");
 }
