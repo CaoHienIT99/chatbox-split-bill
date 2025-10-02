@@ -37,15 +37,28 @@ function parseAmount(text) {
 
 // Redis state helpers
 async function getState(chatId) {
-  const key = `chat:${chatId}`;
-  const data = await redis.get(key);
-  if (data) return JSON.parse(data);
-  const init = { members: ["loren", "rei", "jessi", "thora"], items: [], lastResult: null };
-  await redis.set(key, JSON.stringify(init));
-  return init;
+  try {
+    const key = `chat:${chatId}`;
+    const data = await redis.get(key);
+    if (data) {
+      // Redis đã trả về object rồi, không cần parse
+      return typeof data === 'string' ? JSON.parse(data) : data;
+    }
+    const init = { members: ["loren", "rei", "jessi", "thora"], items: [], lastResult: null };
+    await redis.set(key, JSON.stringify(init));
+    return init;
+  } catch (err) {
+    console.error('Redis getState error:', err);
+    // Fallback to default state
+    return { members: ["loren", "rei", "jessi", "thora"], items: [], lastResult: null };
+  }
 }
 async function setState(chatId, state) {
-  await redis.set(`chat:${chatId}`, JSON.stringify(state));
+  try {
+    await redis.set(`chat:${chatId}`, JSON.stringify(state));
+  } catch (err) {
+    console.error('Redis setState error:', err);
+  }
 }
 
 // Compute settlement
