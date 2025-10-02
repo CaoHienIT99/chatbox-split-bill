@@ -108,6 +108,7 @@ async function replyUsage(chatId) {
     "    + (nghĩa là jessi đã thanh toán 150 đồng cho thora và loren)",
     "  - /add jessi 150 all",
     "    + (nghĩa là jessi đã thanh toán 150 đồng cho tất cả mn)",
+    "/log - liệt kê các khoản đã thêm (chưa /chia hoặc chưa bị xoá)",
     "/chia - hiển thị ai trả cho ai và tự gửi vào group (sau khi chia sẽ tự động xoá các khoản của kỳ tính vừa rồi)",
     "/send - gửi lại kết quả gần nhất vào group",
     "/clear - xoá các khoản do chính bạn đã thêm",
@@ -266,6 +267,27 @@ export default async function handler(req, res) {
 
         // Invalid format
         await bot.sendMessage(chatId, "Cú pháp: /add <NgườiTrả> <SốTiền> [A,B,...|all] [ghi chú]");
+        return res.status(200).end("ok");
+      }
+
+      // /log (list current items)
+      if (/^\/(log|list)\b/i.test(text)) {
+        const state = await getState(chatId);
+        if (!state.items || state.items.length === 0) {
+          await bot.sendMessage(chatId, "Chưa có khoản nào.");
+          return res.status(200).end("ok");
+        }
+        const lines = ["Các khoản đã thêm (chưa chia):"];
+        state.items.forEach((it, idx) => {
+          const who = it.createdBy ? `@${it.createdBy}` : "(ẩn danh)";
+          const note = it.note ? ` • ${it.note}` : "";
+          lines.push(
+            `${idx + 1}. ${who}: ${it.payer} trả ${formatCurrency(
+              it.amount
+            )} cho [${it.participants.join(", ")}]${note}`
+          );
+        });
+        await bot.sendMessage(chatId, lines.join("\n"));
         return res.status(200).end("ok");
       }
 
