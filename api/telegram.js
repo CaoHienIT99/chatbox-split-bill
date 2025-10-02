@@ -210,7 +210,15 @@ export default async function handler(req, res) {
             }
           }
           const note = dashParts[3] || "";
-          state.items.push({ payer, amount, participants, note, createdBy: actor });
+          state.items.push({
+            payer,
+            amount,
+            participants,
+            note,
+            createdBy: actor,
+            createdByUsername: from.username || null,
+            createdByName: [from.first_name, from.last_name].filter(Boolean).join(" ") || null,
+          });
           await setState(chatId, state);
           await bot.sendMessage(
             chatId,
@@ -254,7 +262,15 @@ export default async function handler(req, res) {
             }
           }
           const note = args.slice(noteStartIdx).join(" ");
-          state.items.push({ payer, amount, participants, note, createdBy: actor });
+          state.items.push({
+            payer,
+            amount,
+            participants,
+            note,
+            createdBy: actor,
+            createdByUsername: from.username || null,
+            createdByName: [from.first_name, from.last_name].filter(Boolean).join(" ") || null,
+          });
           await setState(chatId, state);
           await bot.sendMessage(
             chatId,
@@ -279,10 +295,15 @@ export default async function handler(req, res) {
         }
         const lines = ["Các khoản đã thêm (chưa chia):"];
         state.items.forEach((it, idx) => {
-          const who = it.createdBy ? `@${it.createdBy}` : "(ẩn danh)";
+          const username = it.createdByUsername || it.createdBy || null;
+          const display = username
+            ? username.startsWith("@")
+              ? username
+              : `@${username}`
+            : it.createdByName || "(ẩn danh)";
           const note = it.note ? ` • ${it.note}` : "";
           lines.push(
-            `${idx + 1}. ${who}: ${it.payer} trả ${formatCurrency(
+            `${idx + 1}. ${display}: ${it.payer} trả ${formatCurrency(
               it.amount
             )} cho [${it.participants.join(", ")}]${note}`
           );
@@ -351,6 +372,24 @@ export default async function handler(req, res) {
           chatId,
           removed > 0 ? "Đã xoá toàn bộ dữ liệu." : "Không có dữ liệu."
         );
+
+        // Notify group who cleared and when
+        try {
+          if (DEFAULT_GROUP_CHAT_ID) {
+            const who = from.username
+              ? from.username.startsWith("@")
+                ? from.username
+                : `@${from.username}`
+              : [from.first_name, from.last_name].filter(Boolean).join(" ") || `id:${from.id}`;
+            const when = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Bangkok" });
+            await bot.sendMessage(
+              DEFAULT_GROUP_CHAT_ID,
+              `Bill đã được xoá bởi ${who} vào ${when}.`
+            );
+          }
+        } catch (err) {
+          // best-effort; ignore send errors
+        }
         return res.status(200).end("ok");
       }
 
