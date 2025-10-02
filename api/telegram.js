@@ -100,13 +100,18 @@ function computeSettlementFromItems(members, items) {
 async function replyUsage(chatId) {
   const msg = [
     "Chào! tui là một con bot chia bill. Hãy tham khảo các lệnh sau:",
-    "/start - hướng dẫn",
-    "/names thora,jessi,loren,rei - đặt tên 4 người",
-    "/add <NgườiTrả> <SốTiền> [A,B,...|all] [ghi chú]",
-    "ví dụ cho lệnh add : jessi 150 thora,loren cho_dem || jessi 150 all xe_tuktuk",
-    "/chia - hiển thị ai trả cho ai và tự gửi vào group",
+    "/start - mở danh sách hướng dẫn",
+    "/names - đặt tên cho 4 người trong nhóm phân biệt bởi dấu ',' (Hiện tại những người tham gia có tên sau: thora,jessi,loren,rei)",
+    "/add <NgườiTrả> <SốTiền> <A,B,...|all> <ghi chú>",
+    "ví dụ cho lệnh add:",
+    "  - /add jessi 150 thora,loren",
+    "    + (nghĩa là jessi đã thanh toán 150 đồng cho thora và loren)",
+    "  - /add jessi 150 all",
+    "    + (nghĩa là jessi đã thanh toán 150 đồng cho tất cả mn)",
+    "/chia - hiển thị ai trả cho ai và tự gửi vào group (sau khi chia sẽ tự động xoá các khoản của kỳ tính vừa rồi)",
     "/send - gửi lại kết quả gần nhất vào group",
-    "/clear - xoá dữ liệu hiện tại để tạo bill mới",
+    "/clear - xoá các khoản do chính bạn đã thêm",
+    "/clearall - xoá toàn bộ dữ liệu hiện tại (kể cả của người khác thêm)",
   ].join("\n");
   await bot.sendMessage(chatId, msg);
 }
@@ -124,6 +129,8 @@ export default async function handler(req, res) {
 
       const chatId = update.message?.chat?.id || update.edited_message?.chat?.id;
       const text = update.message?.text || update.edited_message?.text;
+      const from = update.message?.from || update.edited_message?.from || {};
+      const actor = from.username || String(from.id || "unknown");
 
       if (!chatId || !text) return res.status(200).end("ok");
 
@@ -202,7 +209,7 @@ export default async function handler(req, res) {
             }
           }
           const note = dashParts[3] || "";
-          state.items.push({ payer, amount, participants, note });
+          state.items.push({ payer, amount, participants, note, createdBy: actor });
           await setState(chatId, state);
           await bot.sendMessage(
             chatId,
@@ -246,7 +253,7 @@ export default async function handler(req, res) {
             }
           }
           const note = args.slice(noteStartIdx).join(" ");
-          state.items.push({ payer, amount, participants, note });
+          state.items.push({ payer, amount, participants, note, createdBy: actor });
           await setState(chatId, state);
           await bot.sendMessage(
             chatId,
@@ -288,16 +295,40 @@ export default async function handler(req, res) {
             await bot.sendMessage(chatId, `Không gửi được vào group. Lỗi: ${err.message}`);
           }
         }
+
+        // Auto-clear items after share
+        state.items = [];
+        await setState(chatId, state);
+        await bot.sendMessage(chatId, "Đã xoá các khoản của kỳ tính vừa rồi.");
         return res.status(200).end("ok");
       }
 
-      // /clear
-      if (/^\/(clear|reset)\b/i.test(text)) {
+      // /clear (remove only caller's items)
+      if (/^\/(clear)\b/i.test(text)) {
         const state = await getState(chatId);
+        const before = state.items.length;
+        state.items = state.items.filter((it) => it.createdBy !== actor);
+        const removed = before - state.items.length;
+        state.lastResult = null;
+        await setState(chatId, state);
+        await bot.sendMessage(
+          chatId,
+          removed > 0 ? `Đã xoá ${removed} khoản của bạn.` : "Không có khoản nào của bạn để xoá."
+        );
+        return res.status(200).end("ok");
+      }
+
+      // /clearall (wipe everything)
+      if (/^\/(clearall)\b/i.test(text)) {
+        const state = await getState(chatId);
+        const removed = state.items.length;
         state.items = [];
         state.lastResult = null;
         await setState(chatId, state);
-        await bot.sendMessage(chatId, "Đã xoá dữ liệu.");
+        await bot.sendMessage(
+          chatId,
+          removed > 0 ? "Đã xoá toàn bộ dữ liệu." : "Không có dữ liệu."
+        );
         return res.status(200).end("ok");
       }
 
